@@ -41,6 +41,7 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import com.mantz_it.rfanalyzer.R
+import com.mantz_it.rfanalyzer.analyzer.FftProcessor
 import com.mantz_it.rfanalyzer.analyzer.FftProcessorData
 import com.mantz_it.rfanalyzer.database.BandWithBookmarkList
 import com.mantz_it.rfanalyzer.database.GlobalPerformanceData
@@ -528,7 +529,6 @@ class AnalyzerSurface(context: Context,
         coroutineScope.collectAppState(waterfallColorMap) { drawingThread?.createWaterfallColorMap(it) }
         coroutineScope.collectAppState(fftDrawingType) { drawingThread?.apply { updateFftPaint() } }
         coroutineScope.collectAppState(squelchSatisfied) { drawingThread?.squelchPaint?.color = if(it) Color.GREEN else Color.RED }
-        coroutineScope.collectAppState(isFullVersion) { drawingThread?.drawWatermark() }  // redraw the watermark
         coroutineScope.launch {
             stationListFlow.collect { newStationList ->
                 stationList = newStationList
@@ -858,6 +858,7 @@ class AnalyzerSurface(context: Context,
     //
 
     private inner class DrawThread() : Thread() {
+        @Volatile
         var running = false
 
         // Objects for Drawing
@@ -956,12 +957,12 @@ class AnalyzerSurface(context: Context,
             Log.i(LOGTAG, "DrawThread started. (Thread: " + this.name + ")")
 
             try {
-                // Draw watermark
-                drawWatermark()
 
                 var frameRateTimestamp = System.currentTimeMillis()
                 var frameRateFrameCounter = 0
                 var frameRate = 0
+                var didDrawWatermarkOnce = false
+                var oldIsFullVersion = isFullVersion.value
 
                 while (running) {
                     val startTimestamp = System.currentTimeMillis()
@@ -999,6 +1000,7 @@ class AnalyzerSurface(context: Context,
                         val readIndex = fftProcessorData.readIndex
                         if (waterfallBuffer != null &&
                             waterfallBufferDirtyMap != null &&
+                            width > 0 &&
                             frequency != null &&
                             sampleRate != null &&
                             sampleRate != 0L
@@ -1020,8 +1022,15 @@ class AnalyzerSurface(context: Context,
                     } finally {
                         fftProcessorData.lock.writeLock().unlock()
                     }
-                    if (doDraw)
+                    if (doDraw) {
                         draw(frameRate)
+                    } else {
+                        val currentIsFullVersion = isFullVersion.value
+                        if (!didDrawWatermarkOnce || oldIsFullVersion != currentIsFullVersion)
+                            drawWatermark() // Draw watermark
+                        didDrawWatermarkOnce = true
+                        oldIsFullVersion = currentIsFullVersion
+                    }
 
                     // measure current frametime to derive how long we need to sleep to meet the user's preferred framerate
                     val frameDrawingTime = System.currentTimeMillis() - startTimestamp
@@ -1039,7 +1048,7 @@ class AnalyzerSurface(context: Context,
             Log.i(LOGTAG, "DrawThread stopped. (Thread: " + this.name + ")")
         }
 
-        private fun drawPreprocessing(waterfallBuffer: Array<FloatArray>,
+        private fun drawPreprocessing(waterfallBuffer: Array<ByteArray>,
                                       waterfallBufferDirtyMap: Array<Boolean>,
                                       peaks: FloatArray?,
                                       frequency: Long,          // center frequency of the fft samples
@@ -1141,7 +1150,9 @@ class AnalyzerSurface(context: Context,
                         counter = 0
                         var j = (i * samplesPerPx).toInt()
                         while (j < (i + 1) * samplesPerPx && (j+start)<fftSize) {
-                            avg += fftRow[j + start]
+                            val unsignedByteVal = fftRow[j + start].toInt() and 0xFF
+                            val floatVal = unsignedByteVal * FftProcessor.INV_SCALE + FftProcessor.MIN_DB
+                            avg += floatVal
                             if (rowNumber == 0 && calcPeaks) peakAvg += peaks[j + start]
                             counter++
                             j++
@@ -1246,32 +1257,31 @@ class AnalyzerSurface(context: Context,
             var c: Canvas? = null
             try {
                 if (!running) return  // make sure not to try to lock the canvas if we should exit..
+                if (!holder.surface.isValid) return
                 c = holder.lockHardwareCanvas()
-                synchronized(holder) {
-                    if (c != null) {
-                        // Clear the canvas:
-                        c.drawColor(Color.BLACK, PorterDuff.Mode.CLEAR)
-                        // Draw FFT:
-                        c.drawPath(fftPath, fftPaint)
-                        // Draw peaks
-                        if (peaksYCoordinates != null)
-                            for(i in 0 until width)
-                                c.drawPoint(i.toFloat(), peaksYCoordinates!![i], peakHoldPaint)
-                        // Draw waterfall (scale to fit waterfallHeight)
-                        c.drawBitmap(waterfallBitmap!!, Rect(0, 0, waterfallBitmap!!.width, waterfallBitmap!!.height), Rect(0, fftHeight, width, height), null)
-                        // Draw Grid (with channel selector)
-                        c.drawBitmap(fftGridBitmap!!, 0f, 0f, null)
+                if (c != null) {
+                    // Clear the canvas:
+                    c.drawColor(Color.BLACK, PorterDuff.Mode.CLEAR)
+                    // Draw FFT:
+                    c.drawPath(fftPath, fftPaint)
+                    // Draw peaks
+                    if (peaksYCoordinates != null)
+                        for(i in 0 until width)
+                            c.drawPoint(i.toFloat(), peaksYCoordinates!![i], peakHoldPaint)
+                    // Draw waterfall (scale to fit waterfallHeight)
+                    c.drawBitmap(waterfallBitmap!!, Rect(0, 0, waterfallBitmap!!.width, waterfallBitmap!!.height), Rect(0, fftHeight, width, height), null)
+                    // Draw Grid (with channel selector)
+                    c.drawBitmap(fftGridBitmap!!, 0f, 0f, null)
 
-                        // draw channel frequency line into waterfall:
-                        if (demodulationEnabled.value) {
-                            val pxPerHz = width / viewportSampleRate.value.toFloat()
-                            val channelPosition = width / 2 + pxPerHz * (channelFrequency.value - viewportFrequency.value)
-                            c.drawLine(channelPosition, fftHeight.toFloat(), channelPosition, height.toFloat(), channelSelectorPaint)
-                        }
+                    // draw channel frequency line into waterfall:
+                    if (demodulationEnabled.value) {
+                        val pxPerHz = width / viewportSampleRate.value.toFloat()
+                        val channelPosition = width / 2 + pxPerHz * (channelFrequency.value - viewportFrequency.value)
+                        c.drawLine(channelPosition, fftHeight.toFloat(), channelPosition, height.toFloat(), channelSelectorPaint)
+                    }
 
-                        drawPerformanceInfo(c, frameRate, averageSignalStrength.value)
-                    } else Log.d(LOGTAG, "draw: Canvas is null.")
-                }
+                    drawPerformanceInfo(c, frameRate, averageSignalStrength.value)
+                } else Log.d(LOGTAG, "draw: Canvas is null.")
             } catch (e: Exception) {
                 Log.e(LOGTAG, "draw: Error while drawing on the canvas. Stop!")
                 e.printStackTrace()
@@ -1845,21 +1855,21 @@ class AnalyzerSurface(context: Context,
             paint.colorFilter = ColorMatrixColorFilter(matrix)
             paint.alpha = 100
             try {
+                if (!running) return  // make sure not to try to lock the canvas if we should exit..
+                if (!holder.surface.isValid) return
                 c = holder.lockHardwareCanvas()
-                synchronized(holder) {
-                    if (c != null) {
-                        // Clear the canvas:
-                        c.drawColor(Color.BLACK, PorterDuff.Mode.CLEAR)
-                        val dstRect = Rect(width/2 - 512/2, height/8, width/2 + 512/2, height/8 + 512)
-                        val srcRect = Rect(0, 0, bitmap.width, bitmap.height)
-                        c.drawBitmap(bitmap, srcRect, dstRect, paint)
-                        textPaint.getTextBounds(text, 0, text.length, bounds)
-                        c.drawText(text, width/2f - bounds.width()/2, height/8f + 512 + bounds.height() + 20, textPaint)
-                        text = "RF ANALYZER"
-                        textPaint.getTextBounds(text, 0, text.length, bounds)
-                        c.drawText(text, width/2f - bounds.width()/2, height/8f - bounds.height() - 20, textPaint)
-                    } else Log.d(LOGTAG, "drawWatermark: Canvas is null.")
-                }
+                if (c != null) {
+                    // Clear the canvas:
+                    c.drawColor(Color.BLACK, PorterDuff.Mode.CLEAR)
+                    val dstRect = Rect(width/2 - 512/2, height/8, width/2 + 512/2, height/8 + 512)
+                    val srcRect = Rect(0, 0, bitmap.width, bitmap.height)
+                    c.drawBitmap(bitmap, srcRect, dstRect, paint)
+                    textPaint.getTextBounds(text, 0, text.length, bounds)
+                    c.drawText(text, width/2f - bounds.width()/2, height/8f + 512 + bounds.height() + 20, textPaint)
+                    text = "RF ANALYZER"
+                    textPaint.getTextBounds(text, 0, text.length, bounds)
+                    c.drawText(text, width/2f - bounds.width()/2, height/8f - bounds.height() - 20, textPaint)
+                } else Log.d(LOGTAG, "drawWatermark: Canvas is null.")
             } catch (e: Exception) {
                 Log.e(LOGTAG, "drawWatermark: Error while drawing on the canvas. Stop!")
                 e.printStackTrace()

@@ -638,7 +638,7 @@ class MainViewModel @Inject constructor(
         onPeakHoldEnabledChanged = appStateRepository.fftPeakHold::set,
         onMaxFrameRateChanged = appStateRepository.maxFrameRate::set,
         onColorMapChanged = appStateRepository.waterfallColorMap::set,
-        onWaterfallSpeedChanged = appStateRepository.waterfallSpeed::set,
+        onWaterfallFpsChanged = appStateRepository.waterfallFps::set,
         onDrawingTypeChanged = appStateRepository.fftDrawingType::set,
         onRelativeFrequencyEnabledChanged = appStateRepository.fftRelativeFrequency::set,
         onFftWaterfallRatioChanged = appStateRepository.fftWaterfallRatio::set,
@@ -896,8 +896,9 @@ class MainViewModel @Inject constructor(
             }
         }
 
-        viewModelScope.collectAppState(appStateRepository.appUsageTimeInSeconds) { usageTime ->
-            if (appStateRepository.settingsLoaded.value) {
+        viewModelScope.launch {
+            appStateRepository.isFullVersion.awaitInitialized()
+            viewModelScope.collectAppState(appStateRepository.appUsageTimeInSeconds) { usageTime ->
                 if (!BuildConfig.IS_FOSS && !appStateRepository.isFullVersion.value) {
                     // TRIAL
                     if (usageTime % 30 == 0) {
@@ -917,14 +918,17 @@ class MainViewModel @Inject constructor(
             }
         }
 
-        viewModelScope.collectAppState(appStateRepository.isFullVersion) { isFullVersion ->
-            if(appStateRepository.settingsLoaded.value) {
-                if (isFullVersion) {
-                    Log.d(TAG, "init (collect isFullVersion): isFullVersion -> TRUE!")
-                    showSnackbar(SnackbarEvent("RF Analyzer FULL VERSION unlocked!"))
-                } else {
-                    Log.d(TAG, "init (collect isFullVersion): isFullVersion -> FALSE!")
-                    showSnackbar(SnackbarEvent("RF Analyzer Full Version refunded. App is now TRIAL VERSION."))
+        if (!BuildConfig.IS_FOSS) {
+            viewModelScope.launch {
+                appStateRepository.isFullVersion.awaitInitialized()
+                viewModelScope.collectAppState(appStateRepository.isFullVersion) { isFullVersion ->
+                    if (isFullVersion) {
+                        Log.d(TAG, "init (collect isFullVersion): isFullVersion -> TRUE!")
+                        showSnackbar(SnackbarEvent("RF Analyzer FULL VERSION unlocked!"))
+                    } else {
+                        Log.d(TAG, "init (collect isFullVersion): isFullVersion -> FALSE!")
+                        showSnackbar(SnackbarEvent("RF Analyzer Full Version refunded. App is now TRIAL VERSION."))
+                    }
                 }
             }
         }

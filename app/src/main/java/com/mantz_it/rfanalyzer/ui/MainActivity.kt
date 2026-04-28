@@ -274,7 +274,7 @@ class MainActivity: ComponentActivity() {
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
                 lifecycleScope.launch {
-                    appStateRepository.blockUntilAllSettingsLoaded()
+                    appStateRepository.dontAskForNotificationPermission.awaitInitialized() // block until this setting is loaded and safe to access
                     if (!appStateRepository.dontAskForNotificationPermission.value) {
                         requestNotificationPermission(requestPermissionLauncher)
                     }

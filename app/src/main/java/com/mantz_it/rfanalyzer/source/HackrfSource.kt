@@ -294,6 +294,15 @@ class HackrfSource : IQSourceInterface {
         return converter.fillPacketIntoSamplePacket(packet, samplePacket)
     }
 
+    override fun fillPacketIntoInterleavedBuffer(packet: ByteArray?, interleavedBuffer: FloatArray?): Boolean {
+        if (packet == null || interleavedBuffer == null) {
+            Log.w(TAG, "fillPacketIntoInterleavedBuffer: packet or interleavedBuffer is null.")
+            return false
+        }
+        return converter.fillPacketIntoInterleavedBuffer(packet, interleavedBuffer)
+    }
+
+
     override fun mixPacketIntoSamplePacket(
         packet: ByteArray?,
         samplePacket: SamplePacket?,

@@ -123,6 +123,28 @@ class Signed16BitIQConverter : IQConverter() {
         return count
     }
 
+    override fun fillPacketIntoInterleavedBuffer(packet: ByteArray, interleavedBuffer: FloatArray): Boolean {
+        if (interleavedBuffer.size < packet.size / 2) return false
+        val lut = lookupTable16
+        var i = 0
+        val pktEnd = packet.size
+        var outIdx = 0
+
+        // Each complex sample: 4 bytes (Ilo, Ihi, Qlo, Qhi)
+        while (i + 3 < pktEnd) {
+            // little-endian 16-bit -> unsigned index 0..65535
+            val iU = (packet[i].toInt() and 0xFF) or (packet[i + 1].toInt() shl 8)
+            val qU = (packet[i + 2].toInt() and 0xFF) or (packet[i + 3].toInt() shl 8)
+
+            interleavedBuffer[outIdx] = lut[iU and 0xFFFF]
+            interleavedBuffer[outIdx+1] = lut[qU and 0xFFFF]
+
+            i += 4
+            outIdx += 2
+        }
+        return true
+    }
+
     override fun mixPacketIntoSamplePacket(packet: ByteArray, samplePacket: SamplePacket, channelFrequency: Long): Int {
         val mixFrequency = (frequency - channelFrequency).toInt()
         generateMixerLookupTable(mixFrequency) // only regenerates if needed

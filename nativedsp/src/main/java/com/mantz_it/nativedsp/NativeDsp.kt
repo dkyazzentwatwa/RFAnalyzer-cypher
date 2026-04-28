@@ -1,64 +1,110 @@
 package com.mantz_it.nativedsp
 
-import android.util.Log
-import kotlin.math.cos
-import kotlin.math.log10
-import kotlin.math.pow
-import kotlin.math.sqrt
-
+/**
+ * Kotlin wrapper for the native DSP FFT ringbuffer implementation.
+ *
+ * Usage:
+ *  - call init(fftSize, bufferCapacity) once (or call init with a small fftSize then call setFftSize later)
+ *  - continuously call addNewSamples(re, im) as SDR samples arrive
+ *  - call performWindowedFftAndReturnMag(magOut, hop) on your display/timer thread to get FFT frames
+ *  - call setFftSize(N) to change FFT size at runtime without losing samples
+ *  - call release() when finished
+ *
+ * Notes:
+ *  - All sizes are in complex samples unless noted.
+ *  - The returned magOut uses centered frequency layout (0 frequency in the middle) and contains
+ *    logarithmic magnitude in dB (10*log10(magnitude + eps)).
+ */
 class NativeDsp {
 
-    var window: FloatArray? = null
-    var inputBuf: FloatArray? = null
-
-    protected fun makeWindow(size: Int) {
-        // Make a blackman window:
-        // w(n)=0.42-0.5cos{(2*PI*n)/(N-1)}+0.08cos{(4*PI*n)/(N-1)};
-        window = FloatArray(size)
-        for (i in window!!.indices)
-            window!![i] = (0.42 - 0.5 * cos(2 * Math.PI * i / (size - 1))
-                + 0.08 * cos(4 * Math.PI * i / (size - 1))).toFloat()
-    }
-
-    /**
-     * Native methods implemented by the 'nativedsp' native library,
-     * performing a FFT with the pffft library. Not thread safe!
-     */
-    private external fun performFFT(input: FloatArray?, output: FloatArray?)
-    private external fun performFFTAndLogMag(input: FloatArray?, output: FloatArray?)
-
     companion object {
-        // Used to load the 'nativedsp' library on application startup.
         init {
             System.loadLibrary("nativedsp")
         }
     }
 
+    private var initialized = false
+    private var fftSize = 0
+    private var bufferCapacity = 0
+
     /**
-     * Applies a Blackman Window to the input samples, followed by a FFT operation.
-     * Fills the array magOut with the logarithmic magnitude of the FFT results (centered around the 0-frequency)
-     * IMPORTANT: This function uses native code. The native code is NOT thread safe (TODO) and therefore
-     * this method is also not Thread safe!!
+     * Initialize native resources.
+     * @param fftSizeComplex number of complex samples for FFT (N)
+     * @param bufferCapacityComplex capacity of ring buffer in complex samples (must be >= 1)
+     *                            If bufferCapacityComplex < fftSizeComplex it will be grown on first setFftSize/use.
      */
-    fun performWindowedFftAndReturnMag(re: FloatArray, im: FloatArray, magOut: FloatArray): Boolean {
-        val N = re.size
-        if(im.size != N || magOut.size != N)
-            return false
-
-        if(window == null || window!!.size != N)
-            makeWindow(re.size)
-
-        if(inputBuf == null || inputBuf!!.size != 2*N)
-            inputBuf = FloatArray(2*N)
-
-        // apply window
-        for(i in 0..<N) {
-            inputBuf!![2*i]   = re[i] * window!![i]
-            inputBuf!![2*i+1] = im[i] * window!![i]
+    fun init(fftSizeComplex: Int, bufferCapacityComplex: Int = fftSizeComplex * 4): Boolean {
+        if (fftSizeComplex <= 0 || bufferCapacityComplex <= 0) return false
+        val ok = nativeInit(fftSizeComplex, bufferCapacityComplex)
+        if (ok) {
+            initialized = true
+            fftSize = fftSizeComplex
+            bufferCapacity = bufferCapacityComplex
         }
-
-        performFFTAndLogMag(inputBuf, magOut)
-        return true
+        return ok
     }
 
+    /**
+     * Release native resources.
+     */
+    fun release() {
+        if (initialized) {
+            nativeRelease()
+            initialized = false
+            fftSize = 0
+            bufferCapacity = 0
+        }
+    }
+
+    /**
+     * Change the FFT size at runtime. Does not discard the ring buffer contents.
+     * If the new fftSize is larger than the current ring buffer capacity, the native
+     * implementation will grow the ring buffer and preserve samples.
+     *
+     * Returns true on success.
+     */
+    fun setFftSize(newFftSize: Int): Boolean {
+        if (!initialized) return false
+        if (newFftSize <= 0) return false
+        val ok = nativeSetFftSize(newFftSize)
+        if (ok) {
+            fftSize = newFftSize
+        }
+        return ok
+    }
+
+    /**
+     * Append new complex samples to the native circular buffer.
+     *
+     * Overwrites oldest samples when buffer is full.
+     */
+    fun addNewSamples(interleavedSamples: FloatArray): Int {
+        return nativeAddNewSamples(interleavedSamples)
+    }
+
+    /**
+     * Perform windowed FFT using the current read position of the ring buffer.
+     *
+     * - magOut must have length == current fftSize (number of bins).
+     * - numberOfConsumedSamples is the *upper limit* on how many complex samples to advance.
+     *   The native method will advance at most this many samples; if fewer samples are available
+     *   it will advance to the end of available samples and return that actual number.
+     *
+     * Returns:
+     *  - >= 0 : actual number of consumed (advanced) complex samples
+     *  - < 0  : error code (see nativedsp.cpp error codes)
+     */
+    fun performWindowedFftAndReturnMag(magOut: FloatArray, numberOfConsumedSamples: Int): Int {
+        if (!initialized) return -1
+        if (magOut.size != fftSize) return -2
+        if (numberOfConsumedSamples <= 0) return -3
+        return nativePerformWindowedFftAndReturnMag(magOut, numberOfConsumedSamples)
+    }
+
+    // --- native methods ---
+    private external fun nativeInit(fftSize: Int, bufferCapacity: Int): Boolean
+    private external fun nativeRelease()
+    private external fun nativeSetFftSize(newFftSize: Int): Boolean
+    private external fun nativeAddNewSamples(interleavedSamples: FloatArray): Int
+    private external fun nativePerformWindowedFftAndReturnMag(magOut: FloatArray, numberOfConsumedSamples: Int): Int
 }

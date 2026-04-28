@@ -97,6 +97,16 @@ class Float32IQConverter : IQConverter() {
         return samplesToCopy
     }
 
+    override fun fillPacketIntoInterleavedBuffer(packet: ByteArray, interleavedBuffer: FloatArray): Boolean {
+        if (interleavedBuffer.size < packet.size / 4) return false
+        // Interpret the ByteArray as FloatArray without copying
+        java.nio.ByteBuffer.wrap(packet)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asFloatBuffer()
+            .get(interleavedBuffer) // then copy into output buffer
+        return true
+    }
+
     override fun mixPacketIntoSamplePacket(packet: ByteArray, samplePacket: SamplePacket, channelFrequency: Long): Int {
         val mixFrequency = (frequency - channelFrequency).toInt()
         generateMixerLookupTable(mixFrequency)

@@ -99,6 +99,16 @@ public class Unsigned8BitIQConverter extends IQConverter {
 	}
 
 	@Override
+	public boolean fillPacketIntoInterleavedBuffer(byte[] packet, float[] interleavedBuffer) {
+		if (interleavedBuffer.length < packet.length)
+			return false;
+		for (int i = 0; i < packet.length; i++) {
+			interleavedBuffer[i] = lookupTable[packet[i] & 0xff];
+		}
+		return true;
+	}
+
+	@Override
 	public int mixPacketIntoSamplePacket(byte[] packet, SamplePacket samplePacket, long channelFrequency) {
 		int mixFrequency = (int)(frequency - channelFrequency);
 

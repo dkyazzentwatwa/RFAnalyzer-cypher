@@ -65,16 +65,16 @@ public class FileIQSource implements IQSourceInterface {
 	public FileIQSource() {
 	}
 
-	public boolean init(Uri uri, ContentResolver contentResolver, int sampleRate, long frequency, int packetSize, boolean repeat, int fileFormat){
+	public boolean init(Uri uri, ContentResolver contentResolver, int sampleRate, long frequency, boolean repeat, int fileFormat){
 		this.uri = uri;
 		this.contentResolver = contentResolver;
 		this.repeat = repeat;
 		this.fileFormat = fileFormat;
 		this.sampleRate = sampleRate;
 		this.frequency = frequency;
-		this.packetSize = packetSize;
-		this.buffer = new byte[packetSize];
 		this.setFileFormat(fileFormat);
+		this.packetSize = sampleRate * getBytesPerSample() / 20; // 20 packets per second
+		this.buffer = new byte[packetSize];
 		return true;
 	}
 
@@ -391,6 +391,11 @@ public class FileIQSource implements IQSourceInterface {
 	@Override
 	public int fillPacketIntoSamplePacket(byte[] packet, SamplePacket samplePacket) {
 		return this.iqConverter.fillPacketIntoSamplePacket(packet, samplePacket);
+	}
+
+	@Override
+	public boolean fillPacketIntoInterleavedBuffer(byte[] packet, float[] interleavedBuffer) {
+		return this.iqConverter.fillPacketIntoInterleavedBuffer(packet, interleavedBuffer);
 	}
 
 	public int mixPacketIntoSamplePacket(byte[] packet, SamplePacket samplePacket, long channelFrequency) {

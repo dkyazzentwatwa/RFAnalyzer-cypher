@@ -510,20 +510,24 @@ class StationImporterExporter @Inject constructor(
     private suspend fun parseFromSdrSharp(rawContent: ByteArray): ParsedImport {
         return try {
             val content = rawContent.toString(Charsets.UTF_8)
-            val entryRegex = "<MemoryEntry>(.*?)</MemoryEntry>".toRegex(RegexOption.DOT_MATCHES_ALL)
-            val tagRegex = "<([A-Za-z0-9]+)>(.*?)</\\1>".toRegex()
-            val entries = entryRegex.findAll(content).map { it.groupValues[1] }.toList()
-            if (entries.isEmpty())
+            val stationEntryRegex = "<MemoryEntry>(.*?)</MemoryEntry>".toRegex(RegexOption.DOT_MATCHES_ALL)
+            val bandEntryRegex = "<RangeEntry (.*?)</RangeEntry>".toRegex(RegexOption.DOT_MATCHES_ALL)
+            val stationTagRegex = "<([A-Za-z0-9]+)>(.*?)</\\1>".toRegex()
+            val bandTagRegex = "([A-Za-z]+)=\"(.*?)\"".toRegex()
+            val stationEntries = stationEntryRegex.findAll(content).map { it.groupValues[1] }.toList()
+            val bandEntries = bandEntryRegex.findAll(content).map { it.groupValues[1] }.toList()
+            if (stationEntries.isEmpty() && bandEntries.isEmpty())
                 return ParsedImport(ParseStatus.WRONG_FORMAT, ImportFormat.SDRSHARP, ParsedData(emptyList(), emptyList(), emptyList()), errorMessage = "Content does not appear to be an SDR# bookmarks XML file.")
 
             val bookmarkLists = mutableListOf<BookmarkList>()
             val stations = mutableListOf<Station>()
+            val bands = mutableListOf<Band>()
             val groupNameToId = mutableMapOf<String, Long>()
             var tempCatId = 1L
 
-            for (entry in entries) {
-                val map = tagRegex.findAll(entry).associate { it.groupValues[1] to it.groupValues[2].trim() }
-                val groupName = map["GroupName"] ?: "SDR# Import"
+            for (entry in stationEntries) {
+                val map = stationTagRegex.findAll(entry).associate { it.groupValues[1] to it.groupValues[2].trim() }
+                val groupName = map["GroupName"] ?: "SDR# Stations"
 
                 val currentCatId = groupNameToId.getOrPut(groupName) {
                     val newId = tempCatId++
@@ -562,7 +566,28 @@ class StationImporterExporter @Inject constructor(
                     source = SourceProvider.BOOKMARK
                 ))
             }
-            val data = ParsedData(bookmarkLists, stations, emptyList())
+            val bandList = BookmarkList(
+                id = tempCatId++,
+                name = "SDR# Bands",
+                type = BookmarkListType.BAND,
+                color = generatedColorForName("SDR# Bands")
+            )
+            if (bandEntries.isNotEmpty())
+                bookmarkLists.add(bandList)
+            for(entry in bandEntries) {
+                val map = bandTagRegex.findAll(entry).associate { it.groupValues[1] to it.groupValues[2].trim() }
+                val name = entry.substringAfter(">", "Unnamed")
+                bands.add(Band(
+                    id = 0,
+                    bookmarkListId = bandList.id,
+                    name = name,
+                    startFrequency = map["minFrequency"]?.toLongOrNull() ?: 0L,
+                    endFrequency = map["maxFrequency"]?.toLongOrNull() ?: 0L,
+                    createdAt = System.currentTimeMillis(),
+                    updatedAt = System.currentTimeMillis(),
+                ))
+            }
+            val data = ParsedData(bookmarkLists, stations, bands)
             ParsedImport(ParseStatus.SUCCESS, ImportFormat.SDRSHARP, data)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse SDR# XML", e)

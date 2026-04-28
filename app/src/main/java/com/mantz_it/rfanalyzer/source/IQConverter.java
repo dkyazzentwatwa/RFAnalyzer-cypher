@@ -79,6 +79,7 @@ public abstract class IQConverter {
 	}
 
 	public abstract int fillPacketIntoSamplePacket(byte[] packet, SamplePacket samplePacket);
+	public abstract boolean fillPacketIntoInterleavedBuffer(byte[] packet, float[] interleavedBuffer);
 
 	public abstract int mixPacketIntoSamplePacket(byte[] packet, SamplePacket samplePacket, long channelFrequency);
 

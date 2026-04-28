@@ -157,6 +157,7 @@ public interface IQSourceInterface {
 	 * @return the number of samples filled into the samplePacket.
 	 */
 	public int fillPacketIntoSamplePacket(byte[] packet, SamplePacket samplePacket);
+	public boolean fillPacketIntoInterleavedBuffer(byte[] packet, float[] interleavedBuffer);
 
 	/**
 	 * Used to convert a packet from this source to the SamplePacket format while at the same

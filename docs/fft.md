@@ -37,25 +37,26 @@ Use **Reset Scale** to return to a default range.
 
 Controls the number of frequency bins used for the [FFT (Fast Fourier Transform)](./advanced.md#understanding-the-fast-fourier-transformation).
 
-Larger FFT sizes (e.g., 32768) provide finer frequency resolution but require
-more RAM for the storage of the waterfall diagram.
-
-Smaller sizes (e.g., 1024, 2048) require a lot less memory but offer less resolution.
+Larger FFT sizes (e.g., 32768) provide finer frequency resolution but require more
+samples for each FFT frame which means it causes an averaging effect in the time domain.
+For small sample rates, a high FFT size will cause the waterfall to look smooth even
+though there are signals which change rappidly. If you want to see quick changes in signals
+choose a lower FFT size. Additionally, higher FFT sizes require more RAM for the storage 
+of the waterfall diagram which might cause issues on old devices.
 
 !!! info "Background Info: FFT Performance"
     The FFT operation is done in Native Code which is very fast even for large FFT
     sizes. The restriction for the maximum FFT size is rather the memory usage for
-    the waterfall plot (especially if the waterfall speed is set to 'slow' and
-    therefore needs to keep more FFT samples in RAM). It is recommended to use the
-    highest setting for the FFT size. On very old hardware you might experience
-    crashes related to Out-of-Memory issues. In this case either reduce the FFT
-    size or increase the FFT speed.
+    the waterfall plot. On very old hardware you might experience crashes related 
+    to Out-of-Memory issues. In this case reduce the FFT size or enable the [Low Performance Mode](./settings.md/#low-performance-mode).
 
 ## Max Frame Rate
 
-Limits how often the FFT and waterfall are redrawn per second.
+Limits how often the FFT and waterfall plots are redrawn per second. This does
+only affect the drawing of the FFT (and waterfall) frames. The rate at which FFT
+frames are calculated from the input samples is controlled via the [Waterfall Speed](#waterfall-speed).
 
-Higher frame rates (up to 60 FPS) make the display smoother.
+Higher frame rates (up to 60 FPS) make the display smoother, especially when scrolling and zooming.
 
 Lower values reduce CPU and battery usage.
 
@@ -68,15 +69,12 @@ A value of 0 disables averaging.
 
 ## Waterfall Speed
 
-Adjusts how fast the waterfall plot is scrolling.
+Adjusts how fast the FFT frames are calculated (measured in frames per second, i.e. fps).
+The actual speed (FPS) at which the frames are calculated are gated by the speed of the
+processor of the Android device.
 
-Options: Slow, Normal, Fast.
-
-Slower speeds compress time, helping you see longer activity history.
-Faster speeds offer more real-time behavior.
-
-Internally, a slower waterfall speed results in larger memory usage (RAM)
-because more FFT samples need to be stored (see [FFT Size](#fft-size)).
+!!! info "Show actual FFT FPS"
+    The actual FFT FPS value can be displayed by enabling the option [Show Debug Information](./settings.md#show-debug-information).
 
 ## Peak Hold
 

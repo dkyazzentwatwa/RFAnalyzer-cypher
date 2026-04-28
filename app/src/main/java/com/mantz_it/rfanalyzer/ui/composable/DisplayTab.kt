@@ -27,6 +27,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mantz_it.rfanalyzer.R
+import com.mantz_it.rfanalyzer.analyzer.FftProcessor.Companion.MAX_FFT_SIZE
 import com.mantz_it.rfanalyzer.database.AppStateRepository.Companion.VERTICAL_SCALE_LOWER_BOUNDARY
 import com.mantz_it.rfanalyzer.database.AppStateRepository.Companion.VERTICAL_SCALE_UPPER_BOUNDARY
 import kotlin.math.roundToInt
@@ -70,12 +71,6 @@ enum class FftDrawingType(val displayName: String) {
     LINE("LINE")
 }
 
-enum class FftWaterfallSpeed(val displayName: String) {
-    SLOW("Slow"),
-    NORMAL("Normal"),
-    FAST("Fast")
-}
-
 data class DisplayTabActions(
     val onVerticalScaleChanged: (Float, Float) -> Unit,
     val onAutoscaleClicked: () -> Unit,
@@ -86,7 +81,7 @@ data class DisplayTabActions(
     val onMaxFrameRateChanged: (Int) -> Unit,
     val onColorMapChanged: (FftColorMap) -> Unit,
     val onDrawingTypeChanged: (FftDrawingType) -> Unit,
-    val onWaterfallSpeedChanged: (FftWaterfallSpeed) -> Unit,
+    val onWaterfallFpsChanged: (Int) -> Unit,
     val onRelativeFrequencyEnabledChanged: (Boolean) -> Unit,
     val onFftWaterfallRatioChanged: (Float) -> Unit,
 )
@@ -102,14 +97,14 @@ fun DisplayTabComposable(
     maxFrameRate: Int,
     colorMap: FftColorMap,
     drawingType: FftDrawingType,
-    waterfallSpeed: FftWaterfallSpeed,
+    waterfallFps: Int,
     relativeFrequency: Boolean,
     fftWaterfallRatio: Float,
     displayTabActions: DisplayTabActions,
 ) {
     val fftSizeSteps = generateSequence(1) { it * 2 }
         .dropWhile { it < 1024 }
-        .takeWhile { it <= 65536 }
+        .takeWhile { it <= MAX_FFT_SIZE }
         .toList()
     ScrollableColumnWithFadingEdge {
         OutlinedBox(
@@ -180,14 +175,16 @@ fun DisplayTabComposable(
             }
         }
         Row(modifier = Modifier.fillMaxWidth()) {
-            OutlinedSteppedSlider(
-                label = "FFT Size",
-                unit = "",
-                steps = fftSizeSteps,
-                selectedStepIndex = fftSizeSteps.indexOf(fftSize),
-                onSelectedStepIndexChanged = { idx -> displayTabActions.onFftSizeChanged(fftSizeSteps[idx]) },
+            OutlinedSlider(
+                label = "Averaging",
+                unit = "frames",
+                minValue = 0f,
+                maxValue = 30f,
+                value = averageLength.toFloat(),
+                decimalPlaces = 0,
+                onValueChanged = { value -> displayTabActions.onAverageLengthChanged(value.roundToInt()) },
                 modifier = Modifier.weight(1f).padding(end = 3.dp),
-                helpSubPath = "fft.html#fft-size"
+                helpSubPath = "fft.html#averaging"
             )
             OutlinedSlider(
                 label = "Max Frame Rate",
@@ -200,32 +197,24 @@ fun DisplayTabComposable(
                 helpSubPath = "fft.html#max-frame-rate"
             )
         }
-        Row(modifier = Modifier.fillMaxWidth()) {
-            OutlinedSlider(
-                label = "Averaging",
-                unit = "frames",
-                minValue = 0f,
-                maxValue = 30f,
-                value = averageLength.toFloat(),
-                decimalPlaces = 0,
-                onValueChanged = { value -> displayTabActions.onAverageLengthChanged(value.roundToInt()) },
-                modifier = Modifier.weight(1f).padding(end = 3.dp),
-                helpSubPath = "fft.html#averaging"
-            )
-            OutlinedSteppedSlider(
-                label = "Waterfall Speed",
-                steps = FftWaterfallSpeed.entries,
-                selectedStepIndex = waterfallSpeed.ordinal,
-                onSelectedStepIndexChanged = {
-                    displayTabActions.onWaterfallSpeedChanged(
-                        FftWaterfallSpeed.entries[it.toInt()]
-                    )
-                },
-                formatValue = { value -> value.displayName },
-                modifier = Modifier.weight(1f).padding(start = 3.dp),
-                helpSubPath = "fft.html#waterfall-speed"
-            )
-        }
+        OutlinedSteppedSlider(
+            label = "FFT Size",
+            unit = "",
+            steps = fftSizeSteps,
+            selectedStepIndex = if(fftSizeSteps.indexOf(fftSize) >= 0) fftSizeSteps.indexOf(fftSize) else fftSizeSteps.size/2,
+            onSelectedStepIndexChanged = { idx -> displayTabActions.onFftSizeChanged(fftSizeSteps[idx]) },
+            helpSubPath = "fft.html#fft-size"
+        )
+        OutlinedSlider(
+            label = "Waterfall Speed",
+            unit = "fps",
+            minValue = 1f,
+            maxValue = 400f,
+            value = waterfallFps.toFloat(),
+            onValueChanged = { displayTabActions.onWaterfallFpsChanged(it.toInt()) },
+            decimalPlaces = 0,
+            helpSubPath = "fft.html#waterfall-speed"
+        )
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             OutlinedSwitch(
                 label = "Peak Hold",
@@ -292,7 +281,7 @@ fun DisplayTabPreview() {
             maxFrameRate = 30,
             colorMap = FftColorMap.GQRX,
             drawingType = FftDrawingType.LINE,
-            waterfallSpeed = FftWaterfallSpeed.NORMAL,
+            waterfallFps = 23,
             relativeFrequency = false,
             fftWaterfallRatio = 0.5f,
             DisplayTabActions(
@@ -305,7 +294,7 @@ fun DisplayTabPreview() {
                 onMaxFrameRateChanged = {},
                 onColorMapChanged = {},
                 onDrawingTypeChanged = {},
-                onWaterfallSpeedChanged = {},
+                onWaterfallFpsChanged = {},
                 onRelativeFrequencyEnabledChanged = {},
                 onFftWaterfallRatioChanged = { },
             ),

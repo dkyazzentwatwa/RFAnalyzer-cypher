@@ -463,13 +463,14 @@ public class RtlsdrSource implements IQSourceInterface {
 	@Override
 	public void stopSampling() {
 		// stop and join receiver thread:
-		if(receiverThread != null) {
-			receiverThread.stopReceiving();
+		ReceiverThread recvThread = receiverThread; // work on a copy to prevent NullPointerExceptions
+		if(recvThread != null) {
+			recvThread.stopReceiving();
 			// Join the thread only if the current thread is NOT the receiverThread ^^
-			if(!Thread.currentThread().getName().equals(receiverThread.threadName)) {
+			if(!Thread.currentThread().getName().equals(recvThread.threadName)) {
 				Log.d(LOGTAG, "close: joining receiver thread from Thread: " + Thread.currentThread().getName());
 				try {
-					receiverThread.join();
+					recvThread.join();
 					Log.d(LOGTAG, "close: receiver thread successfully joined");
 				} catch (InterruptedException e) {
 					Log.w(LOGTAG, "stopSampling: Interrupted while joining receiver thread: " + e.getMessage());
@@ -484,6 +485,11 @@ public class RtlsdrSource implements IQSourceInterface {
 	@Override
 	public int fillPacketIntoSamplePacket(byte[] packet, SamplePacket samplePacket) {
 		return this.iqConverter.fillPacketIntoSamplePacket(packet, samplePacket);
+	}
+
+	@Override
+	public boolean fillPacketIntoInterleavedBuffer(byte[] packet, float[] interleavedBuffer) {
+		return this.iqConverter.fillPacketIntoInterleavedBuffer(packet, interleavedBuffer);
 	}
 
 	@Override

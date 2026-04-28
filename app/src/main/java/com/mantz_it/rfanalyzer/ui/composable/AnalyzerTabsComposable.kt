@@ -128,7 +128,7 @@ fun AnalyzerTabsComposable(
     val fftPeakHold by appStateRepository.fftPeakHold.stateFlow.collectAsState()
     val maxFrameRate by appStateRepository.maxFrameRate.stateFlow.collectAsState()
     val waterfallColorMap by appStateRepository.waterfallColorMap.stateFlow.collectAsState()
-    val waterfallSpeed by appStateRepository.waterfallSpeed.stateFlow.collectAsState()
+    val waterfallFps by appStateRepository.waterfallFps.stateFlow.collectAsState()
     val fftDrawingType by appStateRepository.fftDrawingType.stateFlow.collectAsState()
     val fftRelativeFrequency by appStateRepository.fftRelativeFrequency.stateFlow.collectAsState()
     val fftWaterfallRatio by appStateRepository.fftWaterfallRatio.stateFlow.collectAsState()
@@ -253,7 +253,7 @@ fun AnalyzerTabsComposable(
                         maxFrameRate = maxFrameRate,
                         colorMap = waterfallColorMap,
                         drawingType = fftDrawingType,
-                        waterfallSpeed = waterfallSpeed,
+                        waterfallFps = waterfallFps,
                         relativeFrequency = fftRelativeFrequency,
                         fftWaterfallRatio = fftWaterfallRatio,
                         displayTabActions = displayTabActions

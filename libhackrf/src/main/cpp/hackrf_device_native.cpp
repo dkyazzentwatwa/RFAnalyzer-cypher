@@ -2,6 +2,8 @@
 #include <string>
 #include <cstring>
 #include <cstdint>
+#include <atomic>
+#include <mutex>
 #include <android/log.h>
 #include <libusb.h>
 #include "libhackrf/hackrf.h"
@@ -43,6 +45,25 @@ static JavaVM *g_vm = nullptr;
 static jobject g_hackrfDeviceObj = nullptr;
 static jmethodID g_getEmptyBufferMethod = nullptr;
 static jmethodID g_onSamplesReadyMethod = nullptr;
+
+// Serializes lifecycle/state transitions for the single native device handle.
+static std::mutex g_nativeStateMutex;
+
+// Makes nativeClose() idempotent across threads.
+static std::atomic<bool> g_nativeCloseStarted{false};
+
+static inline bool is_close_started() {
+    return g_nativeCloseStarted.load(std::memory_order_acquire);
+}
+
+static inline void clear_callback_state(JNIEnv* env) {
+    if (g_hackrfDeviceObj != nullptr) {
+        env->DeleteGlobalRef(g_hackrfDeviceObj);
+        g_hackrfDeviceObj = nullptr;
+    }
+    g_getEmptyBufferMethod = nullptr;
+    g_onSamplesReadyMethod = nullptr;
+}
 
 // ============================================================
 // JNI: Cache JavaVM
@@ -92,6 +113,8 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeOpenFd(
         jclass /* clazz */,
         jint fd) {
 
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
     hackrf_device* device = nullptr;
     LOGI("Attempting to open HackRF device with fd: %d", fd);
 
@@ -115,6 +138,9 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeOpenFd(
         return static_cast<jlong>(HACKRF_ERROR_OTHER);
     }
 
+    // Allow a later close for this newly opened device.
+    g_nativeCloseStarted.store(false, std::memory_order_release);
+
     LOGI("HackRF device opened successfully, pointer: %p", device);
     return reinterpret_cast<jlong>(device);
 }
@@ -128,6 +154,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeVersionStringRead(
         JNIEnv* env,
         jobject /* this */,
         jlong nativePtr) {
+
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeVersionStringRead: device is closing/closed");
+        return nullptr;
+    }
 
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
@@ -154,11 +187,24 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeClose(
         jobject /* this */,
         jlong nativePtr) {
 
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGI("nativeClose: close already in progress or already done, skipping");
+        return HACKRF_SUCCESS;
+    }
+
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
         LOGE("nativeClose: Invalid native pointer or device already closed");
         return HACKRF_ERROR_INVALID_PARAM;
     }
+
+    g_nativeCloseStarted.store(true, std::memory_order_release);
+
+    // Drop Java callback references before closing so stop/close cannot race with callback cleanup.
+    clear_callback_state(env);
+
     LOGI("Closing HackRF device, pointer: %p", device);
     int result = hackrf_close(device);
     if (result != HACKRF_SUCCESS) {
@@ -177,6 +223,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeIsStreaming(
         JNIEnv* env,
         jobject /* this */,
         jlong nativePtr) {
+
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeIsStreaming: device is closing/closed");
+        return JNI_FALSE;
+    }
 
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
@@ -199,6 +252,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeSetFrequency(
         jlong nativePtr,
         jlong freq_hz) {
 
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeSetFrequency: device is closing/closed");
+        return HACKRF_ERROR_INVALID_PARAM;
+    }
+
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
         LOGE("nativeSetFrequency: Invalid native pointer");
@@ -220,6 +280,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeSetBasebandFilterBandwidth(
         jlong device_ptr,
         jint bandwidth)
 {
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeSetBasebandFilterBandwidth: device is closing/closed");
+        return HACKRF_ERROR_INVALID_PARAM;
+    }
+
     hackrf_device* device = reinterpret_cast<hackrf_device*>(device_ptr);
 
     if(device == nullptr)
@@ -240,6 +307,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeSetSampleRate(
         jobject /* this */,
         jlong nativePtr,
         jdouble samplerate) {
+
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeSetSampleRate: device is closing/closed");
+        return HACKRF_ERROR_INVALID_PARAM;
+    }
 
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
@@ -267,6 +341,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeSetLnaGain(
         jlong nativePtr,
         jint value) {
 
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeSetLnaGain: device is closing/closed");
+        return HACKRF_ERROR_INVALID_PARAM;
+    }
+
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
         LOGE("nativeSetLnaGain: Invalid native pointer");
@@ -287,6 +368,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeSetVgaGain(
         jobject /* this */,
         jlong nativePtr,
         jint value) {
+
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeSetVgaGain: device is closing/closed");
+        return HACKRF_ERROR_INVALID_PARAM;
+    }
 
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
@@ -312,6 +400,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeSetAmpEnable(
         jobject /* this */,
         jlong nativePtr,
         jboolean value) {
+
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeSetAmpEnable: device is closing/closed");
+        return HACKRF_ERROR_INVALID_PARAM;
+    }
 
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
@@ -341,6 +436,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeSetAntennaEnable(
         jlong nativePtr,
         jboolean value) {
 
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeSetAntennaEnable: device is closing/closed");
+        return HACKRF_ERROR_INVALID_PARAM;
+    }
+
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
         LOGE("nativeSetAntennaEnable: Invalid native pointer");
@@ -365,8 +467,7 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeSetAntennaEnable(
 static int hackrf_callback(hackrf_transfer* transfer) {
     JNIEnv *env = nullptr;
 
-    if (g_hackrfDeviceObj == nullptr) {
-        // No Java object to deliver to
+    if (g_vm == nullptr) {
         return 0;
     }
 
@@ -375,11 +476,30 @@ static int hackrf_callback(hackrf_transfer* transfer) {
         return 0;
     }
 
+    // NO LOCKING HERE - take a snapshot instead
+    if (is_close_started()) {
+        return 0;
+    }
+
+    jobject obj = g_hackrfDeviceObj;
+    jmethodID getEmptyMethod = g_getEmptyBufferMethod;
+    jmethodID onSamplesMethod = g_onSamplesReadyMethod;
+
+    if (obj == nullptr || getEmptyMethod == nullptr || onSamplesMethod == nullptr) {
+        return 0;
+    }
+
+    // Create local ref from global ref
+    jobject localHackrfObj = env->NewLocalRef(obj);
+    if (localHackrfObj == nullptr) {
+        return 0;
+    }
+
     // Call Kotlin to get an empty buffer
-    jbyteArray buffer = (jbyteArray) env->CallObjectMethod(g_hackrfDeviceObj, g_getEmptyBufferMethod);
+    jbyteArray buffer = (jbyteArray) env->CallObjectMethod(localHackrfObj, getEmptyMethod);
     if (buffer == nullptr) {
         LOGE("hackrf_callback: getEmptyBuffer returned null");
-        // Do not crash; just drop samples
+        env->DeleteLocalRef(localHackrfObj);
         return 0;
     }
 
@@ -395,14 +515,14 @@ static int hackrf_callback(hackrf_transfer* transfer) {
     env->SetByteArrayRegion(buffer, 0, static_cast<jsize>(to_copy), reinterpret_cast<const jbyte*>(transfer->buffer));
 
     // Notify Kotlin that samples are ready
-    env->CallVoidMethod(g_hackrfDeviceObj, g_onSamplesReadyMethod, buffer);
+    env->CallVoidMethod(localHackrfObj, onSamplesMethod, buffer);
 
-    // Release local ref
+    // Release local refs
     env->DeleteLocalRef(buffer);
+    env->DeleteLocalRef(localHackrfObj);
 
     return 0;
 }
-
 // ============================================================
 // JNI: Start RX
 // Java: private native int nativeStartRX(long nativePtr);
@@ -413,24 +533,58 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeStartRX(
         jobject thiz,
         jlong nativePtr) {
 
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGE("nativeStartRX: device is closing/closed");
+        return HACKRF_ERROR_INVALID_PARAM;
+    }
+
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
         LOGE("nativeStartRX: Invalid native pointer");
         return HACKRF_ERROR_INVALID_PARAM;
     }
 
+    // If a previous callback object exists, clear it before creating a new one.
+    if (g_hackrfDeviceObj != nullptr) {
+        env->DeleteGlobalRef(g_hackrfDeviceObj);
+        g_hackrfDeviceObj = nullptr;
+    }
+
     // Keep global reference to HackrfDevice instance
     g_hackrfDeviceObj = env->NewGlobalRef(thiz);
+    if (g_hackrfDeviceObj == nullptr) {
+        LOGE("nativeStartRX: Failed to create global ref");
+        return HACKRF_ERROR_OTHER;
+    }
 
     // Resolve Java methods for our callback
     jclass cls = env->GetObjectClass(thiz);
+    if (cls == nullptr) {
+        LOGE("nativeStartRX: Failed to get object class");
+        clear_callback_state(env);
+        return HACKRF_ERROR_OTHER;
+    }
+
     g_getEmptyBufferMethod = env->GetMethodID(cls, "getEmptyBuffer", "()[B");
     g_onSamplesReadyMethod = env->GetMethodID(cls, "onSamplesReady", "([B)V");
+    env->DeleteLocalRef(cls);
+
+    if (g_getEmptyBufferMethod == nullptr || g_onSamplesReadyMethod == nullptr) {
+        LOGE("nativeStartRX: Failed to resolve callback methods");
+        clear_callback_state(env);
+        return HACKRF_ERROR_OTHER;
+    }
 
     // Start streaming with callback
     int result = hackrf_start_rx(device, hackrf_callback, nullptr);
     if (result != HACKRF_SUCCESS) {
         LOGE("hackrf_start_rx() failed: %d", result);
+
+        // Cleanup callback state if start fails.
+        clear_callback_state(env);
+
         // close on failure to avoid resource leak (consistent with Airspy style)
         hackrf_close(device);
         return result;
@@ -450,6 +604,13 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeStopRX(
         jobject /* thiz */,
         jlong nativePtr) {
 
+    std::lock_guard<std::mutex> lock(g_nativeStateMutex);
+
+    if (is_close_started()) {
+        LOGI("nativeStopRX: device is closing/closed");
+        return HACKRF_SUCCESS;
+    }
+
     hackrf_device* device = get_device_ptr(nativePtr);
     if (device == nullptr) {
         LOGE("nativeStopRX: Invalid native pointer");
@@ -457,14 +618,11 @@ Java_com_mantz_1it_libhackrf_HackrfDevice_nativeStopRX(
     }
 
     // Stop streaming
-    hackrf_stop_rx(device);
+    int result = hackrf_stop_rx(device);
 
-    // Free global ref
-    if (g_hackrfDeviceObj) {
-        env->DeleteGlobalRef(g_hackrfDeviceObj);
-        g_hackrfDeviceObj = nullptr;
-    }
+    // Free global ref / callback state
+    clear_callback_state(env);
 
     LOGI("nativeStopRX: HackRF streaming stopped");
-    return HACKRF_SUCCESS;
+    return (result == HACKRF_SUCCESS) ? HACKRF_SUCCESS : result;
 }

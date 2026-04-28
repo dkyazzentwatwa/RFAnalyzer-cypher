@@ -39,7 +39,7 @@ import java.util.concurrent.ArrayBlockingQueue
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
-class Scheduler(var fftSize: Int, private val source: IQSourceInterface) : Thread() {
+class Scheduler(private val source: IQSourceInterface, private val putNewFftSamples: (FloatArray) -> Unit) : Thread() {
 
     companion object {
         // Define the size of the fft output and input Queues. By setting this value to 2 we basically end up
@@ -53,13 +53,13 @@ class Scheduler(var fftSize: Int, private val source: IQSourceInterface) : Threa
         private const val LOGTAG = "Scheduler"
     }
 
-    val fftOutputQueue: ArrayBlockingQueue<SamplePacket> = ArrayBlockingQueue(FFT_QUEUE_SIZE)     // Queue that delivers samples to the Processing Loop
-    val fftInputQueue: ArrayBlockingQueue<SamplePacket> = ArrayBlockingQueue(FFT_QUEUE_SIZE)      // Queue that collects used buffers from the Processing Loop
     val demodOutputQueue: ArrayBlockingQueue<SamplePacket> = ArrayBlockingQueue(DEMOD_QUEUE_SIZE) // Queue that delivers samples to the Demodulator block
     val demodInputQueue: ArrayBlockingQueue<SamplePacket> = ArrayBlockingQueue(DEMOD_QUEUE_SIZE)  // Queue that collects used buffers from the Demodulator block
     var channelFrequency: Long = 0 // Shift frequency to this value when passing packets to demodulator
     var isDemodulationActivated: Boolean = false // Indicates if samples should be forwarded to the demodulator queues or not.
     var squelchSatisfied: Boolean = false // indicates whether the current signal is strong enough to cross the squelch threshold
+
+    private val interleavedFftBuffer = FloatArray(source.packetSize / source.bytesPerSample * 2)
 
     private var stopRequested = true
 
@@ -76,14 +76,10 @@ class Scheduler(var fftSize: Int, private val source: IQSourceInterface) : Threa
     private var squelchDebounceCounter: Int = 0                             // helper counter to debounce squelch changes
 
     init {
+        val samplesPerPacket = source.packetSize / source.bytesPerSample
         // allocate the buffer packets.
-        for (i in 0 until FFT_QUEUE_SIZE) fftInputQueue.offer(
-            SamplePacket(
-                fftSize
-            )
-        )
         for (i in 0 until DEMOD_QUEUE_SIZE) demodInputQueue.offer(
-            SamplePacket(source.packetSize / source.bytesPerSample)
+            SamplePacket(samplesPerPacket)
         )
     }
 
@@ -126,9 +122,6 @@ class Scheduler(var fftSize: Int, private val source: IQSourceInterface) : Threa
     override fun run() {
         this.name = "Thread-Scheduler-" + System.currentTimeMillis()
         Log.i(LOGTAG, "Scheduler started. (Thread: " + this.name + ")")
-        Log.i(LOGTAG, "run: FFT Queues: $fftOutputQueue , $fftInputQueue")
-        var fftBuffer: SamplePacket? = null         // reference to a buffer we got from the fft input queue to fill
-        var demodBuffer: SamplePacket? = null       // reference to a buffer we got from the demod input queue to fill
         var counter: Long = 0
 
         val nsPerPacket = (source.packetSize / source.bytesPerSample) * 1_000_000_000f / source.sampleRate
@@ -190,7 +183,7 @@ class Scheduler(var fftSize: Int, private val source: IQSourceInterface) : Threa
             ///// Demodulation /////////////////////////////////////////////////////////////////////
             if (isDemodulationActivated && (squelchSatisfied || squelchDebounceCounter < SQUELCH_DEBOUNCE_COUNT)) {
                 // Get a buffer from the demodulator inputQueue
-                demodBuffer = demodInputQueue.poll()
+                val demodBuffer = demodInputQueue.poll()
                 if (demodBuffer != null) {
                     demodBuffer.setSize(0) // mark buffer as empty
                     // fill the packet into the buffer and shift its spectrum by mixFrequency:
@@ -204,32 +197,10 @@ class Scheduler(var fftSize: Int, private val source: IQSourceInterface) : Threa
             }
 
             ///// FFT //////////////////////////////////////////////////////////////////////////////
-            // If buffer is null we request a new buffer from the fft input queue:
-            if (fftBuffer == null) {
-                fftBuffer = fftInputQueue.poll()
-                if (fftBuffer != null) {
-                    if (fftBuffer.capacity() == fftSize) fftBuffer.setSize(0) // mark buffer as empty
-                    else fftBuffer =
-                        SamplePacket(fftSize) // fft size changed. discard the old buffer and create a new!
-                }
-            }
+            source.fillPacketIntoInterleavedBuffer(packet, interleavedFftBuffer)
+            putNewFftSamples(interleavedFftBuffer)
 
-            // If we got a buffer, fill it!
-            if (fftBuffer != null) {
-                // fill the packet into the buffer:
-                source.fillPacketIntoSamplePacket(packet, fftBuffer)
-
-                // check if the buffer is now full and if so: deliver it to the output queue
-                if (fftBuffer.capacity() == fftBuffer.size()) {
-                    fftOutputQueue.offer(fftBuffer)
-                    fftBuffer = null
-                }
-                // otherwise we would just go for another round...
-            }
-            // If buffer was null we currently have no buffer available, which means we
-            // simply throw the samples away (this will happen most of the time).
-
-            // In both cases: Return the packet back to the source buffer pool:
+            // Return the packet back to the source buffer pool:
             source.returnPacket(packet)
 
             // Performance Tracking:

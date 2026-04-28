@@ -15,7 +15,6 @@ import com.mantz_it.rfanalyzer.source.HydraSdrRfPort
 import com.mantz_it.rfanalyzer.ui.composable.DemodulationMode
 import com.mantz_it.rfanalyzer.ui.composable.FftColorMap
 import com.mantz_it.rfanalyzer.ui.composable.FftDrawingType
-import com.mantz_it.rfanalyzer.ui.composable.FftWaterfallSpeed
 import com.mantz_it.rfanalyzer.ui.composable.FilesourceFileFormat
 import com.mantz_it.rfanalyzer.ui.composable.FontSize
 import com.mantz_it.rfanalyzer.ui.composable.ScreenOrientation
@@ -25,6 +24,7 @@ import com.mantz_it.rfanalyzer.ui.ColorTheme
 import com.mantz_it.rfanalyzer.ui.composable.ControlDrawerSide
 import com.mantz_it.rfanalyzer.ui.composable.RtlsdrDirectSamplingMode
 import com.mantz_it.rfanalyzer.ui.screens.StationsPage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -99,33 +99,6 @@ class AppStateRepository @Inject constructor(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // Track DataStore loading:
-    private var settingsTotalCount = 0   // A counter which holds the total number of Settings in AppStateRepositary (incremented in each Setting constructor)
-    private var settingsLoadedCount = 0  // A counter which holds the number of Settings which have finished loading
-    var settingsLoaded = MutableState(false)  // State which indicates if all settings are loaded
-    private fun incrementSettingLoadedCounter() {
-        settingsLoadedCount++
-        if (settingsLoadedCount >= settingsTotalCount)
-            settingsLoaded.set(true)
-    }
-    suspend fun blockUntilAllSettingsLoaded() {
-        settingsLoaded.stateFlow.first { it }   // suspends until predicate is satisfied
-    }
-
-    // Perform actions which need to wait until all settings are loaded:
-    init {
-        Log.d("AppStateRepository", "Start loading settings...")
-        val startTime = System.nanoTime()
-        scope.launch {
-            blockUntilAllSettingsLoaded()
-            val endTime = System.nanoTime()
-            val duration = (endTime - startTime) / 1_000_000.0
-            Log.d("AppStateRepository", "Finished loading $settingsLoadedCount (of $settingsTotalCount) settings after ${duration}ms")
-
-            sourceSupportedSampleRates.set(sourceType.value.defaultSupportedSampleRates)
-        }
-    }
 
     // General App State
     val welcomeScreenFinished = Setting("welcomeScreenFinished", false, scope, dataStore)
@@ -215,7 +188,7 @@ class AppStateRepository @Inject constructor(
     val fftPeakHold = Setting("fftPeakHold", false, scope, dataStore)
     val maxFrameRate = Setting("maxFrameRate", 30, scope, dataStore)
     val waterfallColorMap = Setting("waterfallColorMap", FftColorMap.GQRX, scope, dataStore)
-    val waterfallSpeed = Setting("waterfallSpeed", FftWaterfallSpeed.NORMAL, scope, dataStore)
+    val waterfallFps = Setting("waterfallFps", 30, scope, dataStore)
     val fftDrawingType = Setting("fftDrawingType", FftDrawingType.LINE, scope, dataStore)
     val fftRelativeFrequency = Setting("fftRelativeFrequency", false, scope, dataStore)
     val fftWaterfallRatio = Setting("fftWaterfallRatio", 0.4f, scope, dataStore)
@@ -334,6 +307,12 @@ class AppStateRepository @Inject constructor(
     }
     fun emitAnalyzerEvent(event: AnalyzerEvent){ scope.launch { _analyzerEvents.emit(event) } }
 
+    init {
+        scope.launch {
+            sourceType.awaitInitialized()
+            sourceSupportedSampleRates.set(sourceType.value.defaultSupportedSampleRates)
+        }
+    }
 
     // --- Inner Helper Classes ----
 
@@ -446,8 +425,11 @@ class AppStateRepository @Inject constructor(
         dataStore: DataStore<Preferences>,
         private val debugLogSet: Boolean = false
     ) : MutableState<T>(default) {
+        val initializationFinished = CompletableDeferred<Unit>()
+        suspend fun awaitInitialized() {
+            initializationFinished.await()
+        }
         init {
-            settingsTotalCount++
             val key: Preferences.Key<T>? = when (default) {
                 is Boolean -> booleanPreferencesKey(keyName)
                 is Int -> intPreferencesKey(keyName)
@@ -521,7 +503,7 @@ class AppStateRepository @Inject constructor(
                 if (saved != null) flow.value = saved
                 listeners.toList().forEach { it(value) } // Iterate over a copy to avoid ConcurrentModificationException
 
-                incrementSettingLoadedCounter()
+                initializationFinished.complete(Unit) // mark setting as loaded completely and safe to access
 
                 // Persist changes (debounced)
                 flow

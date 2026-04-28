@@ -313,8 +313,24 @@ class AnalyzerService : Service() {
             appStateRepository.rtlsdrIFGainIndex.set(currentIFGainIndex.coerceAtMost(ifGainIndexList.size - 1))
         }
 
+        // Create FftProcessor instance
+        fftProcessor = FftProcessor(
+            initialFftSize = appStateRepository.fftSize.value,
+            initialSampleRate = appStateRepository.sourceSampleRate.value,
+            initialFrequency = appStateRepository.sourceFrequency.value,
+            initialFftFramesPerSecond = appStateRepository.waterfallFps.value.toFloat(),
+            initialChannelFrequencyRange = Pair(
+                appStateRepository.channelFrequency.value - appStateRepository.channelWidth.value,
+                appStateRepository.channelFrequency.value + appStateRepository.channelWidth.value
+            ),
+            fftProcessorData = appStateRepository.fftProcessorData,
+            waterfallBufferSize = if(appStateRepository.enableLowPerformanceMode.value) 250 else 400,
+            fftPeakHold = appStateRepository.fftPeakHold.value,
+            onAverageSignalStrengthChanged = appStateRepository.averageSignalStrength::set
+        )
+
         // Create a new instance of Scheduler
-        scheduler = Scheduler(appStateRepository.fftSize.value, source!!)
+        scheduler = Scheduler(source!!, fftProcessor!!::putNewFftSamples)
 
         // Start the demodulator thread:
         demodulator = Demodulator(
@@ -330,28 +346,8 @@ class AnalyzerService : Service() {
 
         applyNewDemodulationMode(appStateRepository.demodulationMode.value)
 
-        // Start the scheduler
+        // Start the scheduler and fft processor
         scheduler!!.start()
-
-        fftProcessor = FftProcessor(
-            initialFftSize = appStateRepository.fftSize.value,
-            inputQueue = scheduler!!.fftOutputQueue,  // Reference to the input queue for the processing loop
-            returnQueue = scheduler!!.fftInputQueue,  // Reference to the buffer-pool-return queue
-            fftProcessorData = appStateRepository.fftProcessorData,
-            appStateRepository.waterfallSpeed.value,
-            fftPeakHold = appStateRepository.fftPeakHold.value,
-            getChannelFrequencyRange = {
-                val schedulerHandle = scheduler
-                val demodulatorHandle = demodulator
-                if(schedulerHandle != null && demodulatorHandle != null)
-                    Pair(
-                        schedulerHandle.channelFrequency - demodulatorHandle.channelWidth,
-                        schedulerHandle.channelFrequency + demodulatorHandle.channelWidth)
-                else
-                    null
-            },
-            onAverageSignalStrengthChanged = appStateRepository.averageSignalStrength::set
-        )
         fftProcessor!!.start()
 
         // Set state to running and hand over fft processor queues to UI
@@ -526,7 +522,6 @@ class AnalyzerService : Service() {
                     this.contentResolver,
                     appStateRepository.sourceSampleRate.value.toInt(),
                     appStateRepository.sourceFrequency.value,
-                    1024*256,
                     appStateRepository.filesourceRepeatEnabled.value,
                     when(appStateRepository.filesourceFileFormat.value) {
                         FilesourceFileFormat.HACKRF -> FileIQSource.FILE_FORMAT_8BIT_SIGNED
@@ -621,8 +616,14 @@ class AnalyzerService : Service() {
         val asr = appStateRepository
 
         // source tab
-        s.collectAppState(asr.sourceFrequency) { source?.frequency = it }
-        s.collectAppState(asr.sourceSampleRate) { source?.sampleRate = it.toInt() }
+        s.collectAppState(asr.sourceFrequency) {
+            source?.frequency = it
+            fftProcessor?.frequency = it
+        }
+        s.collectAppState(asr.sourceSampleRate) {
+            source?.sampleRate = it.toInt()
+            fftProcessor?.sampleRate = it
+        }
         s.collectAppState(asr.hackrfVgaGainIndex) { (source as? HackrfSource)?.vgaGain = asr.hackrfVgaGainSteps[it] }
         s.collectAppState(asr.hackrfLnaGainIndex) { (source as? HackrfSource)?.lnaGain = asr.hackrfLnaGainSteps[it] }
         s.collectAppState(asr.hackrfAmplifierEnabled) { (source as? HackrfSource)?.ampEnabled = it }
@@ -677,14 +678,26 @@ class AnalyzerService : Service() {
         s.collectAppState(asr.filesourceRepeatEnabled) { (source as? FileIQSource)?.isRepeat = it }
 
         // view tab
-        s.collectAppState(asr.fftSize) { scheduler?.fftSize = it }
-        s.collectAppState(asr.waterfallSpeed) { fftProcessor?.waterfallSpeed = it }
+        s.collectAppState(asr.fftSize) { fftProcessor?.fftSize = it }
+        s.collectAppState(asr.waterfallFps) { fftProcessor?.fftFramesPerSecond = it.toFloat() }
         s.collectAppState(asr.fftPeakHold) { fftProcessor?.fftPeakHold = it }
 
         // demodulation tab
         s.collectAppState(asr.demodulationMode) { applyNewDemodulationMode(it) }
-        s.collectAppState(asr.channelFrequency) { scheduler?.channelFrequency = if(asr.demodulationMode.value == DemodulationMode.CW) it - Demodulator.CW_OFFSET_FREQUENCY else it }
-        s.collectAppState(asr.channelWidth) { demodulator?.channelWidth = it }
+        s.collectAppState(asr.channelFrequency) {
+            scheduler?.channelFrequency = if(asr.demodulationMode.value == DemodulationMode.CW) it - Demodulator.CW_OFFSET_FREQUENCY else it
+            fftProcessor?.channelFrequencyRange = Pair(
+                it - appStateRepository.channelWidth.value,
+                it + appStateRepository.channelWidth.value
+            )
+        }
+        s.collectAppState(asr.channelWidth) {
+            demodulator?.channelWidth = it
+            fftProcessor?.channelFrequencyRange = Pair(
+                appStateRepository.channelFrequency.value - it,
+                appStateRepository.channelFrequency.value + it
+            )
+        }
         s.collectAppState(asr.squelchSatisfied) { scheduler?.squelchSatisfied = it }
         s.collectAppState(asr.effectiveAudioVolumeLevel) { demodulator?.audioVolumeLevel = it }
 
