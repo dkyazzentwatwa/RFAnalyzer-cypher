@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
 import android.os.Binder
 import android.os.IBinder
@@ -181,12 +182,37 @@ class AnalyzerService : Service() {
 
     private fun startForegroundService() {
         val notification = createNotification()
-        Log.d(TAG, "startForegroundService: Moving service to foreground.")
-        ServiceCompat.startForeground(this, 1, notification, FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        val foregroundServiceType = analyzerForegroundServiceType()
+        Log.d(TAG, "startForegroundService: Moving service to foreground with type=$foregroundServiceType.")
+        try {
+            ServiceCompat.startForeground(this, 1, notification, foregroundServiceType)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "startForegroundService: Missing permission for requested foreground service type.", e)
+            ServiceCompat.startForeground(this, 1, notification, FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        }
         // **Explicitly start the service so it doesn't stop when unbound**
         val serviceIntent = Intent(this, this::class.java)
         startService(serviceIntent)
     }
+
+    private fun analyzerForegroundServiceType(): Int {
+        val selectedSource = appStateRepository.sourceType.value
+        var serviceType = FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        if (selectedSource.requiresConnectedDeviceForegroundService()) {
+            serviceType = serviceType or FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        }
+        return serviceType
+    }
+
+    private fun SourceType.requiresConnectedDeviceForegroundService(): Boolean =
+        when (this) {
+            SourceType.HACKRF,
+            SourceType.AIRSPY,
+            SourceType.AIRSPYHF,
+            SourceType.HYDRASDR -> true
+            SourceType.RTLSDR,
+            SourceType.FILESOURCE -> false
+        }
 
     private fun createNotification(): Notification {
         Log.d(TAG, "createNotification: Creating foreground notification.")
@@ -426,7 +452,7 @@ class AnalyzerService : Service() {
                 hackrfSource.setFrequency(appStateRepository.sourceFrequency.value)
                 hackrfSource.setSampleRate(appStateRepository.sourceSampleRate.value.toInt())
                 hackrfSource.vgaGain = appStateRepository.hackrfVgaGainSteps[appStateRepository.hackrfVgaGainIndex.value]
-                hackrfSource.lnaGain = appStateRepository.hackrfVgaGainSteps[appStateRepository.hackrfVgaGainIndex.value]
+                hackrfSource.lnaGain = appStateRepository.hackrfLnaGainSteps[appStateRepository.hackrfLnaGainIndex.value]
                 hackrfSource.ampEnabled = appStateRepository.hackrfAmplifierEnabled.value
                 hackrfSource.antennaPowerEnabled = appStateRepository.hackrfAntennaPowerEnabled.value
                 hackrfSource.frequencyOffset = appStateRepository.hackrfConverterOffset.value.toInt()

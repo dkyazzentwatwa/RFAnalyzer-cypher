@@ -22,6 +22,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -135,6 +136,7 @@ class MainActivity: ComponentActivity() {
 
     // Activity Launchers
     private lateinit var startRtlsdrDriverLauncher: ActivityResultLauncher<Intent>
+    private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
 
     companion object {
         private const val TAG = "MainActivity"
@@ -226,6 +228,7 @@ class MainActivity: ComponentActivity() {
     @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         Log.d(TAG, "onCreate: Activity created.")
 
         // Get version name:
@@ -257,7 +260,7 @@ class MainActivity: ComponentActivity() {
         }
 
         // Check and request POST_NOTIFICATIONS permission if needed
-        val requestPermissionLauncher = registerForActivityResult(
+        notificationPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { isGranted ->
             if (isGranted) {
@@ -276,7 +279,7 @@ class MainActivity: ComponentActivity() {
                 lifecycleScope.launch {
                     appStateRepository.dontAskForNotificationPermission.awaitInitialized() // block until this setting is loaded and safe to access
                     if (!appStateRepository.dontAskForNotificationPermission.value) {
-                        requestNotificationPermission(requestPermissionLauncher)
+                        requestNotificationPermission(notificationPermissionLauncher)
                     }
                 }
             }
@@ -701,7 +704,12 @@ class MainActivity: ComponentActivity() {
         val filter = IntentFilter()
         filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        registerReceiver(usbBroadcastReceiver, filter)
+        ContextCompat.registerReceiver(
+            this,
+            usbBroadcastReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     override fun onStop() {
@@ -746,6 +754,7 @@ class MainActivity: ComponentActivity() {
     }
 
     private fun setFileSourceFromContentUri(uri: Uri) {
+        persistReadPermissionIfAvailable(uri)
         var filename: String? = null
         contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -756,6 +765,17 @@ class MainActivity: ComponentActivity() {
         }
         Log.d(TAG, "setFileSourceFromContentUri: URI: $uri (Original Filename: $filename)")
         mainViewModel.setFilesourceUri(uri.toString(), filename)
+    }
+
+    private fun persistReadPermissionIfAvailable(uri: Uri) {
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            Log.d(TAG, "persistReadPermissionIfAvailable: Persisted read access for $uri")
+        } catch (e: SecurityException) {
+            Log.d(TAG, "persistReadPermissionIfAvailable: URI has no persistable read grant: $uri")
+        } catch (e: IllegalArgumentException) {
+            Log.d(TAG, "persistReadPermissionIfAvailable: URI provider does not support persistable grants: $uri")
+        }
     }
 
     private fun startRtlsdrDriver(): Boolean {
@@ -817,22 +837,17 @@ class MainActivity: ComponentActivity() {
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                         Log.d(TAG, "saveFileToUserDirectory: No permission for background notification.")
                         mainViewModel.showSnackbar(SnackbarEvent(
-                            message = "Missing Permission. Cannot export file.",
-                            buttonText = "Give Permission",
-                            callback = {
-                                val requestPermissionLauncher = registerForActivityResult(
-                                    ActivityResultContracts.RequestPermission()
-                                ) { isGranted ->
-                                    if (isGranted) {
-                                        Log.d(TAG, "POST_NOTIFICATIONS permission granted.")
-                                    } else {
-                                        Log.w(TAG, "POST_NOTIFICATIONS permission denied.")
-                                    }
+                            message = "Export will continue without progress notifications.",
+                            buttonText = "Enable",
+                            callback = { result ->
+                                if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                                    requestNotificationPermission(
+                                        notificationPermissionLauncher,
+                                        "This app can show progress while exporting files in the background."
+                                    )
                                 }
-                                requestNotificationPermission(requestPermissionLauncher, "This app needs the permission to display notifications while exporting files in the background.")
                             }
                         ))
-                        return
                     }
                 }
                 if (FileCopyService.Companion.FileCopyState.isRunning.value)

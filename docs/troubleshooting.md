@@ -38,3 +38,47 @@ app. In this case try the following:
 
 - If possible, submit crash reports via Android.
 - RF Analyzer can log system errors; check the [Settings](./settings.md#logging).
+
+## File Playback Stops Working After Reboot or App Restart
+
+Open IQ files through the app's file picker instead of sharing temporary files
+from another app. Android storage providers can grant long-lived read access
+when the file is selected with the picker, which lets RF Analyzer reopen the
+same file source later.
+
+If a file was moved, renamed, deleted, or lives in a provider that does not
+support persisted access, select the file again from the Filesource tab.
+
+## Large Recording Export Has No Progress Notification
+
+On Android 13 and newer, notification permission is optional. Large exports can
+continue without it, but Android will hide the progress notification. Enable
+notifications for RF Analyzer in Android Settings if you want background export
+progress and completion status.
+
+## Developer Build Troubleshooting
+
+### `mkdocs` Not Found
+
+The app packages the user manual into assets before building. Install the docs
+dependencies first:
+
+```shell
+python3 -m venv /tmp/rfanalyzer-docs-venv
+/tmp/rfanalyzer-docs-venv/bin/python -m pip install -r requirements-docs.txt
+export PATH="/tmp/rfanalyzer-docs-venv/bin:$PATH"
+```
+
+### Java Not Found on macOS
+
+Use Android Studio's bundled JBR:
+
+```shell
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+```
+
+### Native Build Cannot Find CMake
+
+Install CMake `3.22.1` through Android Studio's SDK Manager. All native modules
+use this version so Gradle can configure HackRF, Airspy, Airspy HF+, HydraSDR,
+libusb, and native DSP consistently.

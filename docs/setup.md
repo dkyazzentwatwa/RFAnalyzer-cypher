@@ -4,6 +4,26 @@ This sections explains how to install the RF Analyzer app and connect a source
 for RF signals. Details about the configuration of the SDR can be found in the
 section [SDR Source](./sdr-source.md).
 
+## Supported Android Versions and Permissions
+
+RF Analyzer currently targets modern Android SDKs and supports Android 9
+(API 28) or newer. Android 12 and newer are stricter about foreground services,
+USB/device access, and background notifications, so expect the system to ask for
+permission before the app can keep the analyzer running in the background or
+show progress while exporting large recordings.
+
+The app may request or use these capabilities depending on the selected source:
+
+- USB host access for HackRF, Airspy, Airspy HF+, HydraSDR, and RTL-SDR dongles.
+- The RTL-SDR Android driver app for local RTL-SDR USB access.
+- Network access for `rtl_tcp`, online station lists, documentation links, and
+  spots/databases.
+- Notifications for analyzer foreground operation and large recording exports.
+- Persisted read access for IQ files opened through Android's file picker.
+
+If notification permission is denied, the analyzer/export operation can still
+run, but Android will hide progress notifications.
+
 ## Installation
 
 ### Installing the App

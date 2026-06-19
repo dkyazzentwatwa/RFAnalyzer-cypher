@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -57,7 +58,7 @@ import androidx.core.net.toUri
 fun AboutScreen(versionName: String, navController: NavController) {
     val context = LocalContext.current
     val linkColor = MaterialTheme.colorScheme.primary
-    val htmlText = context.getString(R.string.about_screen_html)
+    val htmlText = stringResource(R.string.about_screen_html)
     val annotatedText = parseHtmlToAnnotatedString(htmlText, linkColor)
 
     Scaffold(

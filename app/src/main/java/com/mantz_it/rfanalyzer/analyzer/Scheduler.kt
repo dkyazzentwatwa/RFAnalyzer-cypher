@@ -197,8 +197,11 @@ class Scheduler(private val source: IQSourceInterface, private val putNewFftSamp
             }
 
             ///// FFT //////////////////////////////////////////////////////////////////////////////
-            source.fillPacketIntoInterleavedBuffer(packet, interleavedFftBuffer)
-            putNewFftSamples(interleavedFftBuffer)
+            if (source.fillPacketIntoInterleavedBuffer(packet, interleavedFftBuffer)) {
+                putNewFftSamples(interleavedFftBuffer)
+            } else {
+                Log.w(LOGTAG, "run: Dropping packet because FFT conversion failed.")
+            }
 
             // Return the packet back to the source buffer pool:
             source.returnPacket(packet)

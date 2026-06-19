@@ -1687,6 +1687,13 @@ fun rememberOpenFilePicker(
         contract = ActivityResultContracts.OpenDocument(),
         onResult = { uri ->
             if (uri != null) {
+                try {
+                    context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (e: SecurityException) {
+                    Log.d("HelperComposables", "rememberOpenFilePicker: URI has no persistable read grant: $uri")
+                } catch (e: IllegalArgumentException) {
+                    Log.d("HelperComposables", "rememberOpenFilePicker: URI provider does not support persistable grants: $uri")
+                }
                 val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                     val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                     if (nameIndex != -1 && cursor.moveToFirst()) cursor.getString(nameIndex) else null

@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <string>
+#include <cstring>
 #include <android/log.h>
 #include <libusb.h>
 #include "libhydrasdr/hydrasdr.h"
@@ -55,6 +56,19 @@ static inline struct hydrasdr_device* get_device_ptr(jlong nativePtr) {
     return reinterpret_cast<struct hydrasdr_device*>(nativePtr);
 }
 
+static jint set_hydrasdr_gain(
+        struct hydrasdr_device* device,
+        hydrasdr_gain_type_t gain_type,
+        uint8_t gain_value,
+        const char* gain_label) {
+    LOGI("Setting %s gain to %d for device %p", gain_label, gain_value, device);
+    int result = hydrasdr_set_gain(device, gain_type, gain_value);
+    if (result != HYDRASDR_SUCCESS) {
+        LOGE("Failed to set %s gain, error: %d", gain_label, result);
+    }
+    return result;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_mantz_1it_libhydrasdr_HydraSdrDevice_getLibraryVersionString(
         JNIEnv* env,
@@ -103,10 +117,17 @@ Java_com_mantz_1it_libhydrasdr_HydraSdrDevice_nativeVersionStringRead(
         return nullptr;
     }
 
-    char version[128];
-    int result = hydrasdr_version_string_read(device, reinterpret_cast<char *>(&version), sizeof(version));
+    hydrasdr_device_info_t device_info;
+    std::memset(&device_info, 0, sizeof(device_info));
+    int result = hydrasdr_get_device_info(device, &device_info);
     if (result != HYDRASDR_SUCCESS) {
-        LOGE("Failed to read version string, error: %d", result);
+        LOGE("Failed to read device info, error: %d", result);
+        return nullptr;
+    }
+    const char* version = device_info.firmware_version[0] != '\0'
+            ? device_info.firmware_version
+            : device_info.board_name;
+    if (version[0] == '\0') {
         return nullptr;
     }
     return env->NewStringUTF(version);
@@ -158,13 +179,7 @@ Java_com_mantz_1it_libhydrasdr_HydraSdrDevice_nativeSetLnaGain(
         LOGE("nativeSetLnaGain: Invalid native pointer");
         return HYDRASDR_ERROR_INVALID_PARAM;
     }
-    uint8_t gain_value = static_cast<uint8_t>(value);
-    LOGI("Setting LNA gain to %d for device %p", gain_value, device);
-    int result = hydrasdr_set_lna_gain(device, gain_value);
-    if (result != HYDRASDR_SUCCESS) {
-        LOGE("Failed to set LNA gain, error: %d", result);
-    }
-    return result;
+    return set_hydrasdr_gain(device, HYDRASDR_GAIN_TYPE_LNA, static_cast<uint8_t>(value), "LNA");
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -178,13 +193,7 @@ Java_com_mantz_1it_libhydrasdr_HydraSdrDevice_nativeSetMixerGain(
         LOGE("nativeSetMixerGain: Invalid native pointer");
         return HYDRASDR_ERROR_INVALID_PARAM;
     }
-    uint8_t gain_value = static_cast<uint8_t>(value);
-    LOGI("Setting Mixer gain to %d for device %p", gain_value, device);
-    int result = hydrasdr_set_mixer_gain(device, gain_value);
-    if (result != HYDRASDR_SUCCESS) {
-        LOGE("Failed to set Mixer gain, error: %d", result);
-    }
-    return result;
+    return set_hydrasdr_gain(device, HYDRASDR_GAIN_TYPE_MIXER, static_cast<uint8_t>(value), "Mixer");
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -198,13 +207,7 @@ Java_com_mantz_1it_libhydrasdr_HydraSdrDevice_nativeSetLinearityGain(
         LOGE("nativeSetLinearityGain: Invalid native pointer");
         return HYDRASDR_ERROR_INVALID_PARAM;
     }
-    uint8_t gain_value = static_cast<uint8_t>(value);
-    LOGI("Setting Linearity gain to %d for device %p", gain_value, device);
-    int result = hydrasdr_set_linearity_gain(device, gain_value);
-    if (result != HYDRASDR_SUCCESS) {
-        LOGE("Failed to set Linearity gain, error: %d", result);
-    }
-    return result;
+    return set_hydrasdr_gain(device, HYDRASDR_GAIN_TYPE_LINEARITY, static_cast<uint8_t>(value), "Linearity");
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -218,13 +221,7 @@ Java_com_mantz_1it_libhydrasdr_HydraSdrDevice_nativeSetSensitivityGain(
         LOGE("nativeSetSensitivityGain: Invalid native pointer");
         return HYDRASDR_ERROR_INVALID_PARAM;
     }
-    uint8_t gain_value = static_cast<uint8_t>(value);
-    LOGI("Setting Sensitivity gain to %d for device %p", gain_value, device);
-    int result = hydrasdr_set_sensitivity_gain(device, gain_value);
-    if (result != HYDRASDR_SUCCESS) {
-        LOGE("Failed to set Sensitivity gain, error: %d", result);
-    }
-    return result;
+    return set_hydrasdr_gain(device, HYDRASDR_GAIN_TYPE_SENSITIVITY, static_cast<uint8_t>(value), "Sensitivity");
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -238,13 +235,7 @@ Java_com_mantz_1it_libhydrasdr_HydraSdrDevice_nativeSetVgaGain(
         LOGE("nativeSetVgaGain: Invalid native pointer");
         return HYDRASDR_ERROR_INVALID_PARAM;
     }
-    uint8_t gain_value = static_cast<uint8_t>(value);
-    LOGI("Setting VGA gain to %d for device %p", gain_value, device);
-    int result = hydrasdr_set_vga_gain(device, gain_value);
-    if (result != HYDRASDR_SUCCESS) {
-        LOGE("Failed to set VGA gain, error: %d", result);
-    }
-    return result;
+    return set_hydrasdr_gain(device, HYDRASDR_GAIN_TYPE_VGA, static_cast<uint8_t>(value), "VGA");
 }
 
 extern "C" JNIEXPORT jint JNICALL

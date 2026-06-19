@@ -1,5 +1,22 @@
 CHANGELOG - RF Analyzer
 
+version 2.3-dev
+- Build and tooling:
+  - Restore local FOSS debug build path with documented Android Studio JBR, SDK 36, NDK and CMake setup
+  - Align native DSP CMake version with the rest of the native modules
+  - Add reproducible MkDocs dependency list for generating the in-app manual
+- Android compatibility:
+  - Declare connected-device foreground service usage for native USB SDR sources
+  - Allow large recording exports to continue when notification permission is denied
+  - Persist file-source read grants when Android's file picker provides them
+  - Start edge-to-edge handling for modern Android devices
+- RF/SDR stability:
+  - Fix HackRF LNA startup gain to use the configured LNA gain steps
+  - Drop failed FFT conversion packets instead of forwarding stale data
+  - Move HydraSDR native version and gain calls to current libhydrasdr APIs
+- UI:
+  - Refresh shared Material theme typography and component shapes
+
 version 2.2
 - Bookmarks:
   - Bookmarks for Stations and Bands

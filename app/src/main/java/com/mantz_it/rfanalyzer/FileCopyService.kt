@@ -7,6 +7,7 @@ import android.app.Notification.FOREGROUND_SERVICE_IMMEDIATE
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
@@ -14,6 +15,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -80,11 +82,16 @@ class FileCopyService : Service() {
             return
         }
         val srcPath = intent.getStringExtra(EXTRA_SRC_PATH) ?: return
-        val destUri = intent.getParcelableExtra<Uri>(EXTRA_DEST_URI) ?: return
+        val destUri = intent.parcelableUriExtra(EXTRA_DEST_URI) ?: return
         val srcFile = File(srcPath)
         Log.d(TAG, "startCopy: Copying file from $srcPath to $destUri")
 
-        startForeground(NOTIFICATION_ID, buildNotification(0, srcFile.name, true))
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildNotification(0, srcFile.name, true),
+            FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        )
 
         copyJob = serviceScope.launch {
             try {
@@ -112,6 +119,22 @@ class FileCopyService : Service() {
         Log.d(TAG, "cancelCopy: Cancel job...")
         copyJob?.cancel()
     }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "onTimeout: Foreground service timeout reached for type=$fgsType")
+        copyJob?.cancel(CancellationException("Foreground service timeout"))
+        FileCopyState.isRunning.value = false
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
+    }
+
+    private fun Intent.parcelableUriExtra(name: String): Uri? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(name, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableExtra(name)
+        }
 
     private suspend fun copyFileWithProgress(srcFile: File, destUri: Uri) {
         val totalBytes = max(1L, srcFile.length())

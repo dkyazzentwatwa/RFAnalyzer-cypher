@@ -67,6 +67,47 @@ Topics include:
 
 ---
 
+## Build From Source (2026)
+
+The FOSS flavor is the recommended local development target. It builds the
+core analyzer without Google Play billing requirements.
+
+Prerequisites:
+
+- Android Studio with its bundled JBR, Android SDK Platform 36, Build Tools 35+
+- Android NDK `27.0.12077973`
+- CMake `3.22.1`
+- Python 3 for the MkDocs manual assets
+
+On macOS, the Android Studio JBR can be used when `java` is not on `PATH`:
+
+```shell
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+```
+
+Install the documentation tooling into a virtual environment or another local
+Python environment:
+
+```shell
+python3 -m venv /tmp/rfanalyzer-docs-venv
+/tmp/rfanalyzer-docs-venv/bin/python -m pip install -r requirements-docs.txt
+export PATH="/tmp/rfanalyzer-docs-venv/bin:$PATH"
+```
+
+Then build and verify:
+
+```shell
+./gradlew :app:generateDocs :nativedsp:assembleDebug :app:assembleFossDebug
+./gradlew :app:lintFossDebug :app:testFossDebugUnitTest
+```
+
+Hardware behavior still needs manual verification with the intended SDR device
+and an Android phone or emulator on the target API level.
+
+---
+
 ## Download & Support
 
 Get RF Analyzer on **Google Play**:
@@ -146,4 +187,3 @@ the copyright holder.
 
 For more license information see the about section inside the app or in the
 user manual.
-
